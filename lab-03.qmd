@@ -1,0 +1,114 @@
+---
+title: "lab-03"
+format: html
+embed-resources: true
+editor: visual
+---
+
+### 1. Read in data
+
+```{r}
+met <- read.csv('met_all',
+                header = TRUE, sep = ',')
+```
+
+### 2. Check dimensions
+
+```{r}
+dim(met)
+head(met)
+tail(met)
+```
+There are 30 columns and 2377343 rows.
+
+### 3. Check variables
+
+```{r}
+str(met)
+```
+### 4. Check key variables
+```{r}
+table(met$year)
+table(met$day)
+table(met$hour)
+table(met$temp)
+table(met$elev)
+table(met$wind.sp)
+```
+
+
+```{r}
+library(dplyr)
+# replace 9999 with NA
+met <- met %>% 
+  mutate(elev = na_if(elev, 9999))
+
+# find max elev
+summary(met$elev)
+
+# remove NA and -40C
+met <- met[!is.na(met$elev), ]
+met <- met[met$temp > -40, ]
+summary(met$temp)
+```
+The highest weather station is at 4113 elevation. The new lowest temperature is -17.2C.
+
+### 5. Check with external data source
+```{r}
+summary(met$elev)
+met <- met[order(met$elev), ]
+tail(met)
+
+met_temp <- met[order(met$temp), ]
+head(met_temp)
+```
+The lowest temperature is located at Ellicott, CO. This is a little suspicious, since the average temperatures in July at this location are usually much higher.
+
+### 6. Summary statistics
+```{r}
+met_maxelev <- met %>% 
+  filter(elev == 4113) %>% 
+  select(temp, wind.sp, hour, day) %>%
+  filter(!is.na(wind.sp))
+summary(met_maxelev)
+cor(met_maxelev)
+```
+Temperature and hour and moderately correlated, with a correlation coefficient of 0.44. 
+Wind speed and day are also moderately correlated, with a correlation coefficient of 0.36. Correlations only test for linear relationships so it may miss other relationships between variables that are not linear.
+
+### 7. Exploratory graphs
+```{r}
+par(mfrow = c(2,2))
+hist(met$elev)
+hist(met$temp)
+hist(met$wind.sp)
+
+library(leaflet)
+leaflet(met$elev) %>%
+  addProviderTiles('OpenStreetMap') %>% 
+  addCircles(lat=39.8,lng=-105.766, opacity=1, fillOpacity=1, radius=100)
+
+library(lubridate)
+elev <- met %>% 
+  filter(elev == 4113) %>% 
+  filter(!is.na(wind.sp))
+
+elev$date <- with(elev, ymd_h(paste(year, month, day, hour, sep= ' ')))
+summary(elev$date)
+elev <- elev[order(elev$date), ]
+head(elev)
+```
+```{r}
+plot(elev$date, elev$temp, pch=16, cex=0.3)
+plot(elev$date, elev$wind.sp, pch=16, cex=0.3)
+```
+The time series plot for temperature stays relatively within the same range, with some fluctuations. The plot for wind speed shows a couple of spikes around mid-August and end of August.
+
+### 8. Questions
+Why are there so many missing data for variables like temperature, elevation, and wind speed?
+
+Is there an association between temperature and wind speed?
+```{r}
+plot(elev$temp, elev$dew.point)
+```
+It seems that temperature and dew point at the highest elevation have a very strong positive linear relationship, which is to be expected.
