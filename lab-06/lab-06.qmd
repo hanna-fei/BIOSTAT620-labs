@@ -1,0 +1,177 @@
+---
+title: "Lab 6"
+author: "Hanna Fei"
+format: html
+editor: visual
+embed-resources: true
+toc: true
+---
+
+### Set up packages
+
+```{r}
+#| message: false
+#| results: hide
+library(dplyr)
+library(ggplot2)
+library(tidytext)
+library(forcats)
+library(tidyr)
+```
+
+### **Read in Medical Transcriptions**
+
+```{r}
+mtsamples <- read.csv("mtsamples.csv")
+```
+
+# **Question 1: What specialties do we have?**
+
+Use the `count()` function from `dplyr` to figure out how many different categories we have in the data. Are these categories related? Overlapping? Evenly distributed?
+
+```{r}
+mtsamples %>% 
+  count(medical_specialty, sort = TRUE)
+
+count_cats <- mtsamples %>% 
+  count(medical_specialty) %>% 
+  ggplot(aes(n, medical_specialty)) +
+  geom_col()
+count_cats
+```
+
+There are 40 different categories of specialties. They are not evenly distributed as some categories have a large number of entries, and not all of them are related. For example, many of the specialties are a type of medical specialty, but there are some categories that are more general like "Letters," "Consult," and "Office Notes." Those categories could be uncategorized so there may be overlap.
+
+# **Question 2**
+
+-   Tokenize the the words in the `transcription` column
+
+-   Count the number of times each token appears
+
+-   Visualize the top 20 most frequent words
+
+Explain what we see from this result. Does it makes sense? What insights (if any) do we get?
+
+```{r}
+transcript_tokens <- mtsamples %>% 
+  unnest_tokens(token, transcription) %>%
+  count(token) %>%
+  top_n(20, n) %>%
+  ggplot(aes(n, fct_reorder(token, n))) +
+  geom_col()
+
+transcript_tokens
+```
+
+We can see that most of these are filler words aside from "patient." It makes sense because these words are commonly used in any setting. It does not give much insight since they are not specific to any medical settings.
+
+# **Question 3**
+
+-   Re-do the visualization but remove stop words before making it
+
+-   Bonus points if you remove numbers as well
+
+What do we see know that we have removed stop words? Does it give us a better idea of what the text is about?
+
+```{r}
+transcript_stop <- mtsamples %>% 
+  unnest_tokens(token, transcription) %>% 
+  filter(!grepl('[0-9]', token)) %>%
+  anti_join(stop_words, by = c("token" = "word")) %>% 
+  count(token, sort = TRUE) %>% 
+  top_n(20, n) %>%
+  ggplot(aes(n, fct_reorder(token, n))) +
+  geom_col()
+
+transcript_stop
+```
+
+Once we remove the stop words, the words are much more specific to medical visits. It becomes more clear what the text is about.
+
+# **Question 4**
+
+Repeat question 2, but this time tokenize into bi-grams. How does the result change if you look at tri-grams?
+
+```{r}
+transcript_bi <- mtsamples %>% 
+  unnest_ngrams(ngram, transcription, n = 2) %>% 
+  count(ngram, sort = TRUE) %>% 
+  top_n(20, n) %>%
+  ggplot(aes(n, fct_reorder(ngram, n))) +
+  geom_col()
+
+transcript_bi
+
+transcript_tri <- mtsamples %>% 
+  unnest_ngrams(ngram, transcription, n = 3) %>% 
+  count(ngram, sort = TRUE) %>% 
+  top_n(20, n) %>%
+  ggplot(aes(n, fct_reorder(ngram, n))) +
+  geom_col()
+
+transcript_tri
+```
+
+When we use tri-grams, there are much fewer phrases with just stop words and the phrases become more specific to the medical visit. This is because most stop words are grouped in two, and it is more rare for there to be three stop words in a row.
+
+# **Question 5**
+
+Using the results you got from Question 4, pick a word and count the words that appear before and after it.
+
+```{r}
+patient1 <- mtsamples %>% 
+  unnest_ngrams(ngram, transcription, n = 3) %>% 
+  separate(ngram, into = c("word1", "word2", "word3"), sep = " ") %>% 
+  select(word1, word2, word3) %>% 
+  filter(word2 == "patient") %>% 
+  count(word1, sort = TRUE) %>% 
+  top_n(20, n)
+
+patient1
+
+patient2 <- mtsamples %>% 
+  unnest_ngrams(ngram, transcription, n = 3) %>% 
+  separate(ngram, into = c("word1", "word2", "word3"), sep = " ") %>% 
+  select(word1, word2, word3) %>% 
+  filter(word2 == "patient") %>% 
+  count(word3, sort = TRUE) %>% 
+  top_n(20, n)
+
+patient2
+```
+
+# **Question 6**
+
+Which words are most used in each of the specialties? You can use `group_by()` and `top_n()` from `dplyr` to have the calculations be done within each specialty. Remember to remove stop words. What are the 5 most-used words for each specialty?
+
+```{r}
+specialty_count <- mtsamples %>% 
+  unnest_tokens(token, transcription) %>% 
+  group_by(medical_specialty) %>% 
+  filter(!grepl('[0-9]', token)) %>%
+  anti_join(stop_words, by = c("token" = "word")) %>% 
+  count(token, sort = TRUE) %>%
+  top_n(5, n) %>% 
+  arrange(medical_specialty, desc(n))
+
+specialty_count
+```
+
+# **Question 7 - extra**
+
+Find your own insight in the data:
+
+Sentiment analysis of each specialty. Which specialties have the most positive and negative sentiments?
+
+```{r}
+sentiment <- mtsamples %>% 
+  unnest_tokens(word, transcription) %>% 
+  inner_join(get_sentiments("afinn")) %>% 
+  group_by(medical_specialty) %>% 
+  summarise(n = sum(value)) %>% 
+  arrange(desc(n))
+
+sentiment
+```
+
+Ophthalmology, Diets and Nutrition, Speech - Language, and Surgery have the most positive sentiments. Consult - History and Phy., General Medicine, and Neurology have the most negative sentiments. This could indicate the positive outcomes from the top sentiment categories and the severity or negative outcomes of the lowest sentiment categories.
