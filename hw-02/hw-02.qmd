@@ -1,0 +1,385 @@
+---
+title: "Homework 2"
+author: "Hanna Fei"
+format: html
+editor: visual
+embed-resources: true
+toc: true
+---
+
+#### Packages
+
+```{r}
+#| message: false
+#| results: hide
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(leaflet)
+```
+
+#### Read in Data
+
+```{r}
+#| message: false
+chs_individual <- read_csv("~/Downloads/umich/BIOSTAT620/BIOSTAT620labs/data/chs_individual.csv")
+chs_regional <- read_csv("~/Downloads/umich/BIOSTAT620/BIOSTAT620labs/data/chs_regional.csv")
+
+head(chs_individual)
+head(chs_regional)
+```
+
+## Data Wrangling
+
+### **1. Merge datasets and impute missing data**
+
+Once downloaded, you can merge these datasets using the `location` variable. After merging the data, make sure you don’t have any duplicates by counting the number of rows. Make sure it matches.
+
+In the case of missing values, impute data using the average amongst individuals with the same values for the “male” and “hispanic” variables. For categorical variables, take the mode. If you are interested (and feel adventurous) in the theme of Data Imputation, take a look at this paper on “Multiple Imputation” using the Amelia R package [here](https://gking.harvard.edu/files/gking/files/amelia_jss.pdf).
+
+```{r}
+# merge data by location: "townname"
+chs_merged <- left_join(chs_individual, chs_regional, by = "townname")
+
+# check duplicates: count rows
+nrow(chs_individual)
+nrow(chs_merged)
+
+# missing values: impute data
+str(chs_merged)
+
+# identify binary vars
+binary <- c("male", "hispanic", "asthma", "active_asthma", 
+                 "father_asthma", "mother_asthma", "wheeze", "hayfever",
+                 "allergy", "smoke", "pets", "gasstove")
+
+binary2 <- setdiff(binary, c("male", "hispanic"))
+
+# identify categorical vars
+chs_merged$educ_parent <- as.factor(chs_merged$educ_parent)
+categorical <- c("race", "educ_parent")
+
+# identify continuous vars
+continuous <- setdiff(names(chs_merged)[sapply(chs_merged, is.numeric)], c(binary))
+
+# helper function to find mode
+mode <- function(x) {
+  ux <- unique(x[!is.na(x)])
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+chs <- chs_merged %>%
+  group_by(male, hispanic) %>%
+  mutate(
+    # continuous
+    across(all_of(continuous), ~ ifelse(is.na(.), mean(., na.rm = TRUE), .)),
+    # binary
+    across(all_of(binary2), ~ ifelse(is.na(.), round(mean(., na.rm = TRUE)), .)),
+    # categorical
+    across(all_of(categorical), ~ ifelse(is.na(.), factor(mode(.), levels = levels(.)), .))
+  ) %>%
+  ungroup()
+
+head(chs)
+sum(is.na(chs)) # check no NAs
+```
+
+### **2. Create categorical obesity level variable**
+
+Create a new categorical variable named “obesity_level” using the BMI measurement (underweight BMI\<14; normal BMI 14-22; overweight BMI 22-24; obese BMI\>24). To make sure the variable is rightly coded, create a summary table that contains the minimum BMI, maximum BMI, and the total number of observations per category.
+
+```{r}
+chs <- chs %>% 
+  mutate(obesity_level = case_when(
+    bmi < 14 ~ "underweight",
+    bmi >= 14 & bmi < 22 ~ "normal",
+    bmi >= 22 & bmi < 24 ~ "overweight",
+    bmi >= 24 ~ "obese"
+  ))
+
+summary <- chs %>% 
+  group_by(obesity_level) %>% 
+  summarize(minBMI = min(bmi),
+            maxBMI = max(bmi),
+            n = n())
+
+summary
+```
+
+### **3. Create categorical smoke & gas exposure variable**
+
+Create another categorical variable named “smoke_gas_exposure” that summarizes “Second Hand Smoke” and “Gas Stove.” The variable should have four categories in total.
+
+```{r}
+chs <- chs %>% 
+  mutate(smoke_gas_exposure = case_when(
+    smoke == 0 & gasstove == 0 ~ "neither",
+    smoke == 1 & gasstove == 0 ~ "smoke only",
+    smoke == 0 & gasstove == 1 ~ "gas only",
+    smoke == 1 & gasstove == 1 ~ "smoke and gas"
+  ))
+
+head(chs["smoke_gas_exposure"])
+```
+
+### **4. FEV summary tables**
+
+Create four summary tables showing the average (or proportion, if binary) and sd of “Forced expiratory volume in 1 second (ml)” (an asthma indicator) by town, sex, obesity level, and “smoke_gas_exposure.” Comment on your findings.
+
+```{r}
+# town
+fev_town <- chs %>% 
+  group_by(townname) %>% 
+  summarize(avg_fev = mean(fev),
+            sd_fev = sd(fev),
+            n = n())
+fev_town
+
+# sex
+fev_sex <- chs %>% 
+  group_by(male) %>% 
+  summarise(avg_fev = mean(fev),
+            sd_fev = sd(fev),
+            n = n())
+fev_sex
+
+# obesity level
+fev_obesity <- chs %>% 
+  group_by(obesity_level) %>% 
+  summarise(avg_fev = mean(fev),
+            sd_fev = sd(fev),
+            n = n())
+fev_obesity
+
+# smoke & gas exposure
+fev_exposure <- chs %>% 
+  group_by(smoke_gas_exposure) %>% 
+  summarise(avg_fev = mean(fev),
+            sd_fev = sd(fev),
+            n = n())
+fev_exposure
+```
+
+**FEV by towns:** There was a fairly wide range of average FEV by towns, with the highest averages being in Alpine, Lake Gregory, and Atascadero. These locations have higher elevations, which could be why FEV for those individuals is higher. Those living in higher elevations are acclimated to having to lower oxygen levels leading to greater lung capacity and higher FEV. The lowest average FEVs were in Long Beach, Mira Loma, and Riverside, which have lower elevations.
+
+**FEV by sex:** The average FEV is 145 ml/second higher for males than females. This could be because males have a higher lung capacity than females.
+
+**FEV by obesity level:** Children who have a higher obesity level have a higher average FEV compared to those with lower obesity levels. This can be explained by the body's reaction to obesity which involves compensating for more body weight and lung growth.
+
+**FEV by smoke and gas exposure:** Children who were exposed to neither exposure or second hand smoke only had slightly higher average FEVs compared to those who were exposed to gas stove only or smoke and gas stove. This could indicate that there is an association between lower FEV in children and having a gas stove in the residence, because gas stoves emit emissions into the home that can impact lung health.
+
+## **EDA**
+
+The primary questions of interest are:
+
+1\. What is the association between BMI and FEV (forced expiratory volume)?
+
+2\. What is the association between smoke and gas exposure and FEV?
+
+3\. What is the association between PM2.5 exposure and FEV?
+
+**Already checked before: read in data, size of data, variable types**
+
+```{r}
+# examine variables of interest
+str(chs[c("fev", "bmi", "smoke_gas_exposure", "pm25_mass")])
+
+# look at top and bottom of the data
+head(chs)
+tail(chs)
+
+# visualize distributions of key variables
+par(mfrow = c(2,2))
+hist_fev <- hist(chs$fev,
+     main = "Distribution of FEV",
+     xlab = "FEV in 1 second (ml)")
+hist_bmi <- hist(chs$bmi,
+     main = "Distribution of BMI",
+     xlab = "BMI")
+hist_pm <- hist(chs$pm25_mass,
+     main = "Distribution of PM2.5",
+     xlab = "PM2.5")
+counts <- table(chs$smoke_gas_exposure)
+counts
+plot_exp <- barplot(counts,
+        main = "Distribution of Smoke & Gas Exposure",
+        xlab = "Exposure",
+        ylab = "Frequency")
+```
+
+#### Association between BMI and FEV
+
+```{r}
+ggplot(chs, aes(x = bmi, y = fev)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(x = "BMI",
+       y = "FEV (ml)",
+       title = "Association Between BMI and FEV") +
+  theme_minimal()
+```
+
+The results of this scatter plot match our observations on FEV by obesity level from part 1. There is a positive association between BMI and FEV. This is backed up by [scientific studies](https://pmc.ncbi.nlm.nih.gov/articles/PMC5845780/#:~:text=In%20adults%2C%20an%20inverse%20association,group%20or%20by%20asthma%20status.) done on FEV in children.
+
+#### Association between smoke and gas exposure and FEV
+
+```{r}
+ggplot(chs, aes(x = smoke_gas_exposure, y = fev)) +
+  geom_boxplot() +
+  labs(x = "Smoke and Gas Exposure",
+       y = "FEV (ml)",
+       title = "FEV by Smoke and Gas Exposure") +
+  theme_minimal()
+```
+
+The results of this boxplot match our observations from part 1. Children with gas stoves in the residence have a slightly lower FEV than those without gas stoves. [Scientific studies](https://pmc.ncbi.nlm.nih.gov/articles/PMC9819315/) show that gas stoves can increase the risk of asthma in children.
+
+#### Association between PM2.5 exposure and FEV
+
+```{r}
+ggplot(chs, aes(x = factor(pm25_mass), y = fev)) +
+  geom_boxplot() +
+  labs(x = "PM2.5 (μg/m³)",
+       y = "FEV (ml)",
+       title = "FEV by PM2.5") +
+  theme_minimal()
+```
+
+From this boxplot, it seems that PM2.5 is not associated with FEV. An increase in PM2.5 does not show any clear trend in FEV.
+
+## **Visualizations**
+
+### 1. Facet plot showing scatterplots with regression lines of BMI vs FEV by “townname”.
+
+```{r}
+ggplot(chs, aes(x = bmi, y = fev)) +
+  geom_point(alpha=0.5) +
+  geom_smooth(method = "lm", se = TRUE) +
+  facet_wrap(~ townname) +
+  labs(x = "BMI (kg/m^2)",
+       y = "FEV (ml)",
+       title = "Scatterplot of BMI vs. FEV by Town") +
+  theme_minimal()
+```
+
+These scatter plots show us that in each town, BMI and FEV are positively correlated. The linear regression lines show that some towns have a stronger positive relationship than others; for example, Lake Elsinore has a relatively strong positive association while Alpine has a weaker positive association.
+
+### 2. Stacked histograms of FEV by BMI category and FEV by smoke/gas exposure. 
+
+```{r}
+ggplot(chs, aes(x = fev, fill = obesity_level)) +
+  geom_histogram(binwidth = 100, position = "stack", color = "black") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(x = "FEV (ml)", y = "Count",
+       fill = "Obesity Level",
+       title = "FEV Distribution by Obesity Level") +
+  theme_minimal()
+```
+
+This histogram visualizes how children with higher BMI have higher FEV. The distribution for underweight children is on the left side of the overall distribution, indicating that those categorized as underweight tend to have lower FEV compared to the total distribution. The distribution for children categorized as overweight and obese are on the left side of the overall distribution, indicating that they tend to have higher FEV compared to the total distribution.
+
+```{r}
+ggplot(chs, aes(x = fev, fill = smoke_gas_exposure)) +
+  geom_histogram(binwidth = 100, position = "stack", color = "black") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(x = "FEV (ml)", y = "Count",
+       fill = "Smoke and Gas Exposure",
+       title = "FEV Distribution by Smoke/Gas Exposure") +
+  theme_minimal()
+```
+
+From this histogram, it is hard to tell whether any category of smoke and gas exposure has a higher or lower FEV. Since the differences in FEV between each category are small, all categories appear to be relatively centered on the distribution.
+
+### 3. Barchart of BMI by smoke/gas exposure.
+
+```{r}
+# plotting categorical bmi
+chs <- chs %>% 
+  mutate(obesity_level = factor(obesity_level, levels = c("underweight", "normal", "overweight", "obese")))
+
+ggplot(chs) +
+  geom_bar(mapping = aes(x = obesity_level, fill = smoke_gas_exposure), position = "stack") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Obesity Level by Smoke/Gas Exposure",
+       x = "Obesity Level",
+       y = "Count",
+       fill = "Smoke/Gas Exposure")
+```
+
+This barchart of BMI/obesity level by smoke/gas exposure shows the number of children who are exposed to each category of smoke/gas exposure in each obesity level category. We can see that most children with gas stoves exposure fall under normal BMI, with overweight and obese categories being higher than underweight. In each category, the number of children with exposures increases with each obesity level except for normal which has the most counts for all categories of obesity.
+
+### 4. Statistical summary graphs of FEV by BMI and FEV by smoke/gas exposure category.
+
+```{r}
+# fev by BMI category
+ggplot(chs, aes(x = obesity_level, y = fev, fill = obesity_level)) +
+  geom_boxplot() +
+  scale_fill_brewer(palette = "YlOrRd") +
+  labs(x = "Obesity Level",
+       y = "FEV (ml)",
+       title = "FEV by Obesity Level") +
+  theme_minimal()
+```
+
+This summary boxplot of FEV by obesity level shows that FEV and obesity level have a positive association. Children with higher obesity levels have a higher average FEV.
+
+```{r}
+# fev by smoke/gas exposure
+ggplot(chs, aes(x = smoke_gas_exposure, y = fev, fill = smoke_gas_exposure)) +
+  geom_boxplot() +
+  scale_fill_brewer(palette = "YlOrRd") +
+  labs(x = "Smoke & Gas Exposure",
+       y = "FEV (ml)",
+       title = "FEV by Smoke & Gas Exposure") +
+  theme_minimal()
+```
+
+This summary graph shows that children exposed to gas only and smoke and gas have a slightly lower average FEV than children exposed to smoke only or neither. This indicates that children exposed to gas stoves are likely to have lower FEV on average.
+
+### 5. A leaflet map showing the concentrations of PM2.5 mass in each of the CHS communities.
+
+```{r}
+# summarize pm2.5 for each town
+pm25_town <- chs %>% 
+  group_by(townname, lat, lon) %>% 
+  summarize(avg_pm25 = mean(pm25_mass)) %>% 
+  ungroup()
+
+pm25.pal <- colorNumeric(palette = "YlOrRd", domain = pm25_town$avg_pm25)
+
+pm25_map <- leaflet(pm25_town) %>% 
+  addProviderTiles('CartoDB.Positron') %>% 
+  addCircles(lat = ~lat, lng = ~lon,
+             label = ~paste0(townname, " Avg PM2.5: ", avg_pm25, " μg/m³"), 
+             fillColor= ~pm25.pal(avg_pm25),
+             color = "black", weight = 0.5,
+             fillOpacity = 0.8, radius = 1000) %>% 
+  addLegend('bottomleft', pal = pm25.pal, values = pm25_town$avg_pm25,
+            title = 'PM2.5 (μg/m³)', opacity = 1)
+
+pm25_map
+```
+
+This map shows that CHS communities in large metropolitan areas such as Mira Loma and Riverside have higher pm2.5 levels compared to communities that have lower populations such as Atascadero or Santa Maria. This can confound other variables in the study since PM2.5 is associated with FEV, so we would need to adjust for community in our analysis of FEV.
+
+### 6. PM2.5 vs Average FEV in Each Town
+
+```{r}
+# mean fev for each town
+town_fev <- chs %>% 
+  group_by(townname, pm25_mass) %>% 
+  summarize(avg_fev = mean(fev)) %>% 
+  ungroup()
+
+ggplot(town_fev, aes(x = pm25_mass, y = avg_fev)) +
+  geom_point(color = "blue") +
+  geom_text(aes(label = townname), hjust = -0.1, size = 3) +
+  geom_smooth(method = "lm", se = TRUE, color = "lightblue") +
+  labs(x = "PM2.5 (μg/m³)",
+       y = "Mean FEV (ml)",
+       title = "Mean FEV vs. PM2.5 by Town") +
+  theme_minimal()
+```
+
+This plot shows how average PM2.5 in each community is negatively associated with mean FEV in children.
