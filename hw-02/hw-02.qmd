@@ -294,20 +294,21 @@ From this histogram, it is hard to tell whether any category of smoke and gas ex
 ### 3. Barchart of BMI by smoke/gas exposure.
 
 ```{r}
-# plotting categorical bmi
 chs <- chs %>% 
   mutate(obesity_level = factor(obesity_level, levels = c("underweight", "normal", "overweight", "obese")))
 
-ggplot(chs) +
-  geom_bar(mapping = aes(x = obesity_level, fill = smoke_gas_exposure), position = "stack") +
+# plotting mean bmi
+ggplot(chs, aes(x = smoke_gas_exposure, y = bmi, fill = smoke_gas_exposure)) +
+  geom_bar(stat = "summary", fun = mean) +
   scale_fill_brewer(palette = "Set2") +
-  labs(title = "Obesity Level by Smoke/Gas Exposure",
-       x = "Obesity Level",
-       y = "Count",
-       fill = "Smoke/Gas Exposure")
+  labs(title = "Average BMI by Smoke/Gas Exposure",
+       x = "Smoke & Gas Exposure",
+       y = "Mean BMI") +
+  theme_minimal() +
+  theme(legend.position = "none")
 ```
 
-This barchart of BMI/obesity level by smoke/gas exposure shows the number of children who are exposed to each category of smoke/gas exposure in each obesity level category. We can see that most children with gas stoves exposure fall under normal BMI, with overweight and obese categories being higher than underweight. In each category, the number of children with exposures increases with each obesity level except for normal which has the most counts for all categories of obesity.
+This barchart of average BMI by smoke/gas exposure shows that children exposed to smoke only and smoke and gas have a slightly higher average BMI than those who were exposed to gas only or neither. We can see that children who are exposed to second hand smoke have a higher average BMI than those not exposed.
 
 ### 4. Statistical summary graphs of FEV by BMI and FEV by smoke/gas exposure category.
 
