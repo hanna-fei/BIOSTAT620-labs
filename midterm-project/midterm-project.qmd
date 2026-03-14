@@ -1,0 +1,455 @@
+---
+title: "Midterm Project: Alzheimer's Disease and Healthy Aging Data"
+author: "Hanna Fei"
+format: html
+editor: visual
+toc: true
+embed-resources: true
+---
+
+```{r}
+#| include: false
+# Packages
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(purrr)
+library(knitr)
+library(ggplot2)
+library(ggpubr)
+```
+
+## Introduction
+
+The dataset used for this project is "Alzheimer's Disease and Healthy Aging Data" from the Centers for Disease Control and Prevention's (CDC) Behavioral Risk Factor Surveillance System (BRFSS) survey. The BRFSS survey is taken each year at the state level and includes questions about demographics, health behaviors, and topics relating to health. The Alzheimer's Disease and Healthy Aging Data is a subset of the BRFSS that includes data about Alzheimer's-related indicators. This dataset includes data from years 2015-2022, and is stratified based on location, age group, sex category, and race/ethnicity.
+
+The indicator variable of interest is a percentage corresponding to the question: "Percentage of older adults who reported subjective cognitive decline or memory loss that is happening more often or is getting worse in the preceding 12 months." This is a percentage among older adults who took this survey, which we will refer to as the prevalence of cognitive decline.
+
+The question of interest is: **What are the relationships between demographics and prevalence of cognitive decline in older adults?**
+
+## Data Preparation
+
+The data was downloaded from the CDC's website in csv form. The following steps were taken to clean and organize the data:
+
+-   The dataset was filtered to data corresponding to the variable of interest: "Percentage of older adults who reported subjective cognitive decline or memory loss that is happening more often or is getting worse in the preceding 12 months."
+
+-   Rows with a footnote were removed to prevent inclusion of unreliable data, including missing data and small sample sizes.
+
+-   NA values in prevalence were dropped.
+
+-   In YearStart/YearEnd variables, one category had values 2019-2022. These years were averaged to 2020.5. All other years had the same start and end year. A new variable was created for the average year.
+
+-   Variables of interest were selected and renamed.
+
+-   Pivot_wider was used to create sex and race/ethnicity variables.
+
+-   The Geolocation variable was split into lat and lon.
+
+-   Age was turned into a factor.
+
+-   Location was filtered to state level data to avoid repeated data.
+
+-   The dataset was examined to make sure there is no missing or unusual data.
+
+```{r}
+#| include: false
+data <- read.csv("~/Downloads/umich/BIOSTAT620/BIOSTAT620labs/data/alzheimers.csv")
+```
+
+```{r}
+#| include: false
+#| output: false
+
+# identify question for indicator of interest
+cog_decline <- "Percentage of older adults who reported subjective cognitive decline or memory loss that is happening more often or is getting worse in the preceding 12 months"
+
+# subset data based on indicator of interest
+cog_data <- data %>% 
+  filter(Question == cog_decline)
+
+notes <- unique(cog_data$Data_Value_Footnote) # look at footnotes
+data_type <- unique(cog_data$Data_Value_Type) # check that all values are percentages
+
+cog_data <- data %>% 
+  # subset data based on indicator of interest
+  filter(Question == cog_decline) %>% 
+  
+  # keep rows without footnote
+  filter(Data_Value_Footnote == "") %>% 
+  
+  # keep rows with geolocation
+  filter(Geolocation != "") %>% 
+
+  drop_na(Data_Value) %>% # drop NAs in outcome of interest
+  
+  # create year variable - average of yearstart & yearend
+  mutate(Year_Avg = rowMeans(select(., YearStart, YearEnd))) %>% 
+  
+  # select variables of interest
+  select(Year_Avg, YearStart, YearEnd, LocationDesc, Data_Value,
+         Stratification1, 
+         StratificationCategory2, Stratification2, Geolocation) %>% 
+  
+  # change StratificationCategory1-Age Group to Age Group variable, rename other cols
+  rename(Age = Stratification1, 
+         State = LocationDesc, 
+         Cog_Decline = Data_Value) %>% 
+  
+  # pivot_wider to create sex & race/ethnicity variables
+  mutate(StratificationCategory2 = ifelse(StratificationCategory2 == "", "empty",
+                                          StratificationCategory2)) %>% 
+  
+  pivot_wider(id_cols = c(Year_Avg, YearStart, YearEnd, State, Cog_Decline, Age, Geolocation),
+              names_from = StratificationCategory2,
+              values_from = Stratification2,
+              values_fn = list) %>% 
+  select(-empty) %>% 
+  mutate(Sex = map_chr(Sex, ~ ifelse(length(.x) == 0, NA_character_, .x)),
+         Sex = factor(Sex),
+         Race_Ethnicity = map_chr(`Race/Ethnicity`, ~ ifelse(length(.x) == 0, NA_character_, .x)),
+         Race_Ethnicity = factor(Race_Ethnicity)) %>% 
+  select(-`Race/Ethnicity`) %>% 
+  
+  # create columns for lat and lon
+  mutate(Geolocation = str_remove_all(Geolocation, "POINT\\s*\\(|\\)")) %>%
+  separate(Geolocation, into = c("lon", "lat"), sep = " ", convert = TRUE) %>% 
+  
+  # change age variable to factor w/ 3 levels: 50-64, 65+, Overall
+  mutate(Age = recode(Age, "65 years or older" = "65+", "50-64 years" = "50-64"),
+         Age = factor(Age, levels = c("50-64", "65+", "Overall")))
+
+states <- unique(cog_data$State) # check if location includes only states
+```
+
+```{r}
+#| include: false
+cog_data <- cog_data %>%
+  relocate(lon, lat, .after = everything())
+head(cog_data)
+tail(cog_data)
+```
+
+## Exploratory Analysis
+
+### Dataset Overview
+
+The resulting dataset has 2,735 rows x 10 columns.
+
+#### **Key variables:**
+
+-   `Year_Avg`: Mean of YearStart and YearEnd (Type: Numeric)
+
+-   `YearStart, YearEnd`: The start and end year when the survey was conducted (Type: Numeric)
+
+-   **`Cog_Decline`**: "Percentage of older adults who reported subjective cognitive decline or memory loss that is happening more often or is getting worse in the preceding 12 months," referred to as prevalence in this report (Type: Numeric)
+
+-   `State`: The state that the survey was collected in (Type: Character)
+
+-   `Age`: Categorical demographic variable with 3 groups: 50-64, 65+, and Overall (Type: Factor)
+
+-   `Sex`: Categorical demographic variable with 3 groups: Male, Female, and NA/not stratified by sex (Type: Factor)
+
+-   `Race_Ethnicity`: Categorical demographic variable with 6 groups: Asian/Pacific Islander, Black non-Hispanic, Hispanic, Native Am/Alaskan Native, White non-Hispanic, and NA/not stratified by race/ethnicity (Type: Factor)
+
+-   `lon, lat`: Longitude and latitude (Type: Numeric)
+
+```{r}
+#| echo: false
+# dimension of data
+dim_data <- dim(cog_data)
+caption_text <- paste("Dataset (",dim_data[1], "rows,", dim_data[2], " columns)")
+kable(head(cog_data), caption = caption_text)
+```
+
+```{r}
+#| echo: false
+data_summary <- cog_data %>%
+  summarise(
+    Total_observations = n(),
+    Number_of_states = n_distinct(State),
+    Year_start = min(YearStart),
+    Year_end = max(YearEnd),
+    Number_of_age_groups = n_distinct(Age),
+    Number_of_sex_categories = n_distinct(Sex),
+    Number_of_race_ethnicity_groups = n_distinct(Race_Ethnicity),
+    Mean_prevalence = mean(Cog_Decline),
+    Median_prevalence = median(Cog_Decline),
+    SD_prevalence = sd(Cog_Decline),
+    Min_prevalence = min(Cog_Decline),
+    Max_prevalence = max(Cog_Decline)
+  )
+data_summary_long <- data_summary %>%
+  pivot_longer(cols = everything(),
+               names_to = "Characteristic",
+               values_to = "Value") %>%
+  mutate(
+    Value = case_when(
+      Characteristic %in% c("Mean_prevalence","Median_prevalence","SD_prevalence","Min_prevalence","Max_prevalence") ~ sprintf("%.2f", Value),
+      TRUE ~ sprintf("%.0f", Value)
+    )
+  )
+
+data_summary_long$Characteristic <- gsub("_", " ", data_summary_long$Characteristic)
+
+kable(data_summary_long,
+      col.names = c("Dataset Characteristic", "Value"),
+      caption = "Summary of Dataset Characteristics")
+```
+
+```{r}
+#| include: false
+# Splitting dataset by demographics
+sex_data <- cog_data %>% 
+  filter(!is.na(Sex),
+         Age == "Overall",
+         is.na(Race_Ethnicity))
+race_data <- cog_data %>% 
+  filter(!is.na(Race_Ethnicity),
+         is.na(Sex),
+         Age == "Overall")
+age_data <- cog_data %>% 
+  filter(Age != "Overall",
+         is.na(Sex),
+         is.na(Race_Ethnicity))
+state_data <- cog_data %>% 
+  filter(Age == "Overall",
+         is.na(Sex),
+         is.na(Race_Ethnicity))
+```
+
+### Distribution of Key Variables
+
+```{r}
+#| echo: false
+#| message: false
+ggplot(cog_data, aes(x = Cog_Decline)) +
+  geom_histogram(binwidth = 2, color = "black", fill = "gray") +
+  labs(title = "Distribution of Cognitive Decline Prevalence",
+       x = "Prevalence (%)") +
+  theme_minimal()
+
+p2 <- ggplot(data = age_data, aes(x = Age)) +
+  geom_bar(fill = "slategray2") +
+  labs(title = "Distribution of Age Groups") +
+  theme_minimal()
+
+p3 <- ggplot(data = sex_data, aes(x = Sex)) +
+  geom_bar(fill = "orchid") +
+  labs(title = "Distribution of Sex Categories") +
+  theme_minimal()
+
+race_shortened <- c(
+  "Asian/Pacific Islander" = "AAPI",
+  "Black, non-Hispanic" = "Black",
+  "Hispanic" = "Hispanic", 
+  "Native Am/Alaskan Native" = "Native Am",
+  "White, non-Hispanic" = "White"
+)
+p4 <- ggplot(data = race_data, aes(x = Race_Ethnicity)) +
+  geom_bar(fill = "salmon") +
+  labs(title = "Distribution of Race/Ethnicity",
+       x = "Race/Ethnicity Group") +
+  scale_x_discrete(labels = race_shortened) +
+  theme_minimal()
+
+p5 <- ggplot(data = cog_data, aes(x = Year_Avg)) +
+  geom_bar(fill = "pink") +
+  labs(title = "Distribution of Year",
+       x = "Year") +
+  theme_minimal()
+
+ggarrange(p2, p3, p4, p5,
+          ncol = 2, nrow = 2)
+```
+
+-   **Prevalence**: The distribution of cognitive decline prevalence is approximately normal.
+
+-   **Age and Sex**: There is a similar number of participants in each age and sex group. This is good for comparison between groups.
+
+-   **Race/Ethnicity**: The largest category of race/ethnicity groups surveyed were non-Hispanic White. The smallest categories were Asian/Pacific Islander and Native Am/Alaskan Native. Since this distribution is so skewed, we should be cautious about how we interpret our results with respect to race/ethnicity groups represented.
+
+-   **Year**: 2015 had the largest number of participants for a single year. 2020.5 had a large number since it is an aggregated variable containing information from 2019-2022. This may have been done to smooth out the abnormalities in responses during COVID. 2017 and 2018 had the smallest number of participants.
+
+## Preliminary Findings
+
+Looking further into the data, we examine the relationships between demographic variables and prevalence of cognitive decline.
+
+### Age Group and Cognitive Decline
+
+```{r}
+#| echo: false
+age_summary <- age_data %>%
+  group_by(Age) %>%
+  summarise(
+    mean_prevalence = mean(Cog_Decline),
+    sd_prevalence = sd(Cog_Decline),
+    n = n()
+  )
+
+kable(age_summary, col.names = c("Age Group", "Mean Prevalence", "SD Prevalence", "n"),
+      caption = "Summary of Cognitive Decline by Age Group")
+
+ggplot(age_data, aes(x = Age, y = Cog_Decline)) +
+  geom_boxplot(fill = "slategray2") +
+  labs(title = "Prevalence of Cognitive Decline by Age Group",
+       y = "Prevalence (%)") +
+  theme_minimal()
+```
+
+Comparing cognitive decline prevalence between the two age groups, the average prevalence for age group 65+ is higher than 50-64. This is expected since Alzheimer's and symptoms of cognitive decline usually show up later in older adults.
+
+### Sex Category and Cognitive Decline
+
+```{r}
+#| echo: false
+sex_summary <- sex_data %>%
+  group_by(Sex) %>%
+  summarise(
+    mean_prevalence = mean(Cog_Decline),
+    sd_prevalence = sd(Cog_Decline),
+    n = n()
+  )
+kable(sex_summary, col.names = c("Sex", "Mean Prevalence", "SD Prevalence", "n"),
+      caption = "Summary of Cognitive Decline by Sex")
+
+ggplot(sex_data, aes(x = Sex, y = Cog_Decline)) +
+  geom_boxplot(fill = "orchid") +
+  labs(title = "Prevalence of Cognitive Decline by Sex",
+       y = "Prevalence (%)") +
+  theme_minimal()
+```
+
+Comparing cognitive decline prevalence between male and female participants, the average prevalence for males was higher than females. This suggests that more males have symptoms of cognitive decline than females.
+
+### Age and Sex Heatmap of Cognitive Decline
+
+```{r}
+#| echo: false
+agesex_data <- cog_data %>% 
+  filter(Age != "Overall",
+         !is.na(Sex),
+         is.na(Race_Ethnicity)) %>% 
+  group_by(Age, Sex) %>% 
+  summarise(mean_prevalence = mean(Cog_Decline), .groups = "drop")
+
+ggplot(agesex_data, aes(x = Age, y = Sex, fill = mean_prevalence)) +
+  geom_tile() +
+  geom_text(aes(label = round(mean_prevalence, 1)), color = "white", size = 4) +
+  scale_fill_gradient(low = "blue", high = "red") +
+  labs(title = "Average Cognitive Decline by Age and Sex Category",
+       fill = "Mean Prevalence (%)") +
+  theme_minimal()
+```
+
+This heatmap compares the prevalence of cognitive decline for 4 categories of age and sex: males 50-64, males 65+, females 50-64, and females 65+. The highest prevalence was in males 65+ and the lowest prevalence was in males 50-64. This could suggest that males progress through symptoms of cognitive decline quicker than females in older ages. We can see that the prevalence is similar for males and females 50-64 years of age, but males have a higher prevalence in the 65+ age category.
+
+### Race/Ethnicity and Cognitive Decline
+
+```{r}
+#| echo: false
+race_summary <- race_data %>%
+  group_by(Race_Ethnicity) %>%
+  summarise(
+    mean_prevalence = mean(Cog_Decline),
+    sd_prevalence = sd(Cog_Decline),
+    n = n()
+  ) %>% 
+  arrange(desc(mean_prevalence))
+kable(race_summary, col.names = c("Race/Ethnicity", "Mean Prevalence", "SD Prevalence", "n"),
+      caption = "Summary of Cognitive Decline by Race/Ethnicity")
+
+ggplot(race_data, aes(x = Race_Ethnicity, y = Cog_Decline)) +
+  geom_boxplot(fill = "salmon") +
+  labs(title = "Prevalence of Cognitive Decline by Race/Ethnicity",
+       y = "Prevalence (%)", x = "Race/Ethnicity") +
+  theme_minimal()
+```
+
+Comparing the prevalence of cognitive decline across race/ethnicity groups, Native American/Alaskan Native participants had a much higher prevalence compared to other groups. Asian/Pacific Islander and non-Hispanic White participants had the lowest prevalence.
+
+### Trend of Cognitive Decline Over Time
+
+```{r}
+#| echo: false
+year_summary <- state_data %>%
+  group_by(Year_Avg) %>%
+  summarise(
+    Mean_prevalence = mean(Cog_Decline),
+    sd_prevalence = sd(Cog_Decline),
+    n = n()
+  )
+
+ggplot(year_summary, aes(x = Year_Avg, y = Mean_prevalence)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Trend in Cognitive Decline Prevalence from 2015 - 2022",
+    x = "Year",
+    y = "Mean Prevalence (%)"
+  ) +
+  theme_minimal()
+```
+
+This plot of mean cognitive decline prevalence over time shows significant changes in 2020 and 2021. In 2020, the mean prevalence decreased significantly, likely due to COVID-19 pandemic factors that perhaps affected the data collection. The prevalence in 2020.5 is more normal, which includes data from years 2019-2022. In 2021, the prevalence increased significantly, possibly due to older adults being isolated in lockdown during the pandemic leading to an increase in their cognitive decline.
+
+### Cognitive Decline Prevalence by State
+
+```{r}
+#| echo: false
+state_summary <- state_data %>%
+  group_by(State) %>%
+  summarise(mean_prevalence = mean(Cog_Decline),
+            sd_prevalence = sd(Cog_Decline),
+            n = n()) %>% 
+  arrange(desc(mean_prevalence))
+
+kable(head(state_summary, 10),
+      caption="Top 10 States by Cognitive Decline Prevalence",
+      col.names = c("State", "Mean Prevalence", "SD Prevalence", "n"))
+```
+
+### Spatial Trend of Cognitive Decline in the US
+
+```{r}
+#| echo: false
+us_map <- map_data("state")
+
+# turn state names to lowercase
+state_summary <- state_summary %>% 
+  mutate(State = tolower(State))
+
+# merge datasets
+map <- us_map %>% 
+  left_join(state_summary, by = c("region" = "State"))
+
+# top 10 states w/ highest cog decline prevalence
+top10_cog <- map %>% 
+  group_by(region) %>% 
+  summarize(prevalence = first(mean_prevalence),
+            long = mean(long),
+            lat = mean(lat)) %>% 
+  arrange(desc(prevalence)) %>% 
+  slice(1:10)
+
+# custom color palette
+color_pal <- c("white", "#fbb7c0","#b6244f")
+
+ggplot(data = map) +
+  geom_polygon(mapping = aes(x = long, y = lat, group = group, fill = mean_prevalence),
+               color = "white") +
+  scale_fill_gradientn(colors = color_pal,
+                       name = "Prevalence (%)") +
+  geom_text(data = top10_cog, 
+            aes(x = long, y = lat, label = "*"),
+            size = 6) +
+  labs(title = "Spatial Trend of Cognitive Decline in the US",
+       subtitle = "* = Top 10 states with highest average cognitive decline prevalence")
+```
+
+The summary table and corresponding map of cognitive decline in the United States shows which states had the highest cognitive decline prevalence. States in the Southern United States have the highest prevalence.
+
+## Conclusion
+
+From this analysis, demographics are associated with cognitive decline in older adults in several ways.
+
+Prevalence of cognitive decline showed the most notable differences when comparing between race/ethnicity groups and regions in the United States. This can be explained by social determinants of health relating to each race/ethnicity and region in the United States. Factors such as low education level, poverty, isolation, poor neighborhood quality, and limited access to health care are often more prevalent in regions in the Southern United States and are associated with increased risk factors for Alzheimer's disease and cognitive decline.
